@@ -6,21 +6,34 @@ let connectionConfig;
 
 if (process.env.MYSQL_PUBLIC_URL || process.env.DATABASE_URL) {
     const dbUrl = process.env.MYSQL_PUBLIC_URL || process.env.DATABASE_URL;
-    console.log("📝 Using Database URL connection strategy");
-    const parsed = new URL(dbUrl);
-
-    connectionConfig = {
-        host: parsed.hostname,
-        port: parsed.port || 3306,
-        user: parsed.username,
-        password: decodeURIComponent(parsed.password),
-        database: parsed.pathname.replace('/', ''),
-        ssl: {
-            rejectUnauthorized: false
+    
+    // Check if it's actually a URL (contains ://)
+    if (dbUrl.includes('://')) {
+        console.log("📝 Using Database URL connection strategy");
+        try {
+            const parsed = new URL(dbUrl);
+            connectionConfig = {
+                host: parsed.hostname,
+                port: parsed.port || 3306,
+                user: parsed.username,
+                password: decodeURIComponent(parsed.password),
+                database: parsed.pathname.replace('/', ''),
+                ssl: {
+                    rejectUnauthorized: false
+                }
+            };
+        } catch (err) {
+            console.error("❌ Failed to parse DATABASE_URL:", err.message);
+            process.exit(1);
         }
-    };
-} else {
-    console.warn("⚠️ No DATABASE_URL found. Falling back to individual environment variables or defaults.");
+    } else {
+        console.warn("⚠️ DATABASE_URL detected but it lacks a protocol (e.g., mysql://). Falling back to individual variables.");
+        // We let it fall through to the individual variables logic below
+    }
+}
+
+if (!connectionConfig) {
+    console.warn("ℹ️ Using individual environment variables or defaults.");
     connectionConfig = {
         host: process.env.DB_HOST || 'localhost',
         port: process.env.DB_PORT || 3306,
