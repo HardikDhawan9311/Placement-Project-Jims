@@ -72,7 +72,9 @@ app.use('/api/mock-import', mockCsvRoutes);
 
 // Serve static files from the React app in production
 if (process.env.NODE_ENV === 'production') {
-  app.use(express.static(path.join(__dirname, '../client/dist')));
+  const distPath = path.join(__dirname, '../client/dist');
+  console.log('🚀 Serving static files from:', distPath);
+  app.use(express.static(distPath));
 
   app.get(/.*/, (req, res, next) => {
     // If it's an API route, don't serve index.html
