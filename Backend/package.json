@@ -17,7 +17,6 @@
     "jsonwebtoken": "^9.0.3",
     "multer": "^2.1.1",
     "mysql2": "^3.18.0",
-    "placement-project-jims": "file:..",
     "xlsx": "^0.18.5"
   }
 }

@@ -16,14 +16,16 @@ if (process.env.MYSQL_PUBLIC_URL || process.env.DATABASE_URL) {
                 host: parsed.hostname,
                 port: parsed.port || 3306,
                 user: parsed.username,
-                password: decodeURIComponent(parsed.password),
-                database: parsed.pathname.replace('/', ''),
+                password: parsed.password, // Already decoded by new URL()
+                database: (parsed.pathname || '/').replace('/', ''),
                 ssl: {
                     rejectUnauthorized: false
                 }
             };
+            console.log("✅ Database URL parsed successfully for host:", connectionConfig.host);
         } catch (err) {
             console.error("❌ Failed to parse DATABASE_URL:", err.message);
+            console.error("🔍 URL attempted:", dbUrl.replace(/:([^:@]+)@/, ':****@')); // Log scrubbed URL
             process.exit(1);
         }
     } else {
@@ -48,6 +50,7 @@ if (!connectionConfig) {
 }
 
 // Create the connection pool with optimized production settings
+console.log("🏊 Creating MySQL connection pool...");
 const pool = mysql.createPool({
     ...connectionConfig,
     waitForConnections: true,

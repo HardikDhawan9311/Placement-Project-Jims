@@ -70,23 +70,45 @@ app.use('/api/companies-import', companyCsvRoutes);
 app.use('/api/cie-import', cieCsvRoutes);
 app.use('/api/mock-import', mockCsvRoutes);
 
+// Basic health check (Keep this ABOVE the static files block)
+app.get('/health', (req, res) => {
+  res.json({ 
+    status: 'OK', 
+    message: 'Backend is running', 
+    timestamp: new Date().toISOString(),
+    env: process.env.NODE_ENV 
+  });
+});
+
+// Root API route
+app.get('/api', (req, res) => {
+  res.json({ message: 'Welcome to the Placement Project API' });
+});
+
 // Serve static files from the React app in production
 if (process.env.NODE_ENV === 'production') {
+  const fs = require('fs');
   const distPath = path.join(__dirname, '../client/dist');
-  console.log('🚀 Serving static files from:', distPath);
-  app.use(express.static(distPath));
+  
+  if (fs.existsSync(distPath)) {
+    console.log('📂 Production Mode: Serving static files from', distPath);
+    app.use(express.static(distPath));
 
-  app.get(/.*/, (req, res, next) => {
-    // If it's an API route, don't serve index.html
-    if (req.path.startsWith('/api')) return next();
-    res.sendFile(path.join(__dirname, '../client/dist', 'index.html'));
-  });
+    app.get('(.*)', (req, res, next) => {
+      // If it's an API route, don't serve index.html
+      if (req.path.startsWith('/api')) return next();
+      
+      const indexPath = path.join(distPath, 'index.html');
+      if (fs.existsSync(indexPath)) {
+        res.sendFile(indexPath);
+      } else {
+        next();
+      }
+    });
+  } else {
+    console.log('ℹ️ Production Mode: Running as standalone API server (No static files found).');
+  }
 }
-
-// Basic health check
-app.get('/health', (req, res) => {
-  res.json({ status: 'OK', message: 'Backend is running' });
-});
 
 const startServer = async () => {
   try {
