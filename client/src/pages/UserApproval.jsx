@@ -1,12 +1,10 @@
 import { useState, useEffect } from 'react';
-import axios from 'axios';
+import axiosInstance from '../api/axiosInstance';
 import { toast } from 'sonner';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../components/ui/table';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import { Check, X, Shield, Clock, UserCheck } from 'lucide-react';
-
-const API_BASE_URL = 'http://localhost:3000/api/admin';
 
 export function UserApproval() {
   const [pendingUsers, setPendingUsers] = useState([]);
@@ -15,7 +13,7 @@ export function UserApproval() {
   const fetchPendingUsers = async () => {
     try {
       setIsLoading(true);
-      const response = await axios.get(`${API_BASE_URL}/pending-users`);
+      const response = await axiosInstance.get('/admin/pending-users');
       setPendingUsers(response.data);
     } catch (err) {
       console.error('Error fetching pending users:', err);
@@ -31,7 +29,7 @@ export function UserApproval() {
 
   const handleApprove = async (userId) => {
     try {
-      await axios.post(`${API_BASE_URL}/approve-user/${userId}`);
+      await axiosInstance.post(`/admin/approve-user/${userId}`);
       toast.success('User approved successfully');
       setPendingUsers(prev => prev.filter(user => user.id !== userId));
     } catch (err) {
@@ -43,7 +41,7 @@ export function UserApproval() {
   const handleReject = async (userId) => {
     if (!window.confirm('Are you sure you want to reject and delete this registration?')) return;
     try {
-      await axios.delete(`${API_BASE_URL}/reject-user/${userId}`);
+      await axiosInstance.delete(`/admin/reject-user/${userId}`);
       toast.success('User rejected and removed');
       setPendingUsers(prev => prev.filter(user => user.id !== userId));
     } catch (err) {

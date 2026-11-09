@@ -5,6 +5,7 @@ const db = require('../config/db');
 exports.getPendingUsers = async (req, res) => {
     try {
         const [rows] = await db.query('SELECT id, name, email, role, created_at FROM users WHERE is_approved = 0');
+        console.log(`📊 Database Check: Found ${rows.length} users with is_approved = 0`);
         res.json(rows);
     } catch (err) {
         console.error('Error fetching pending users:', err);

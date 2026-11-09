@@ -6,6 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card'
 import { PlacementReadinessCard } from '../components/PlacementReadinessCard';
 import { SemesterAccordion } from '../components/SemesterAccordion';
 import { PerformanceCharts } from '../components/PerformanceCharts';
+import axiosInstance from '../api/axiosInstance';
 
 export function StudentProfile({ student, onBack, onNotify, onSendToCompany }) {
   const [profileData, setProfileData] = useState(null);
@@ -18,9 +19,8 @@ export function StudentProfile({ student, onBack, onNotify, onSendToCompany }) {
       try {
         setIsLoading(true);
         // Using the new refactored endpoint
-        const response = await fetch(`http://localhost:3000/api/students/${student.student_id}/academic-history`);
-        if (!response.ok) throw new Error('Failed to fetch full student profile');
-        const data = await response.json();
+        const response = await axiosInstance.get(`/students/${student.student_id}/academic-history`);
+        const data = response.data;
 
         setProfileData(data.details);
 

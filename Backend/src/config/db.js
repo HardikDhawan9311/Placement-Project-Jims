@@ -1,27 +1,46 @@
 const mysql = require('mysql2');
+const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '../../.env') });
 
 let connectionConfig;
 
 if (process.env.MYSQL_PUBLIC_URL || process.env.DATABASE_URL) {
     const dbUrl = process.env.MYSQL_PUBLIC_URL || process.env.DATABASE_URL;
-    const parsed = new URL(dbUrl);
 
-    const isLocalhost = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1';
-    connectionConfig = {
-        host: parsed.hostname,
-        port: parsed.port || 3306,
-        user: parsed.username,
-        password: decodeURIComponent(parsed.password),
-        database: parsed.pathname.replace('/', ''),
-        ...(isLocalhost ? {} : {
-            ssl: {
-                // In production (remote hosts), validate certificates by default.
-                // Set DB_SSL_REJECT_UNAUTHORIZED=false only for dev/testing environments.
-                rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED !== 'false'
-            }
-        })
-    };
-} else {
+    // Check if it's actually a URL (contains ://)
+    if (dbUrl.includes('://')) {
+        console.log("📝 Using Database URL connection strategy");
+        try {
+            const parsed = new URL(dbUrl);
+            const isLocalhost = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1';
+
+            connectionConfig = {
+                host: parsed.hostname,
+                port: parsed.port || 3306,
+                user: parsed.username,
+                password: decodeURIComponent(parsed.password),
+                database: (parsed.pathname || '/').replace('/', ''),
+                ...(isLocalhost ? {} : {
+                    ssl: {
+                        // In production (remote hosts), validate certificates by default.
+                        // Set DB_SSL_REJECT_UNAUTHORIZED=false only for dev/testing environments.
+                        rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED !== 'false'
+                    }
+                })
+            };
+            console.log("✅ Database URL parsed successfully for host:", connectionConfig.host);
+        } catch (err) {
+            console.error("❌ Failed to parse DATABASE_URL:", err.message);
+            console.error("🔍 URL attempted:", dbUrl.replace(/:([^:@]+)@/, ':****@')); // Log scrubbed URL
+            process.exit(1);
+        }
+    } else {
+        console.warn("⚠️ DATABASE_URL detected but it lacks a protocol (e.g., mysql://). Falling back to individual variables.");
+    }
+}
+
+if (!connectionConfig) {
+    console.warn("ℹ️ Using individual environment variables or defaults.");
     connectionConfig = {
         host: process.env.DB_HOST || 'localhost',
         port: process.env.DB_PORT || 3306,
@@ -29,9 +48,14 @@ if (process.env.MYSQL_PUBLIC_URL || process.env.DATABASE_URL) {
         password: process.env.DB_PASSWORD || '',
         database: process.env.DB_NAME || 'placement'
     };
+
+    if (!process.env.DB_HOST && process.env.NODE_ENV === 'production') {
+        console.error("❌ ERROR: Database configuration missing in production environment!");
+    }
 }
 
 // Create the connection pool with optimized production settings
+console.log("🏊 Creating MySQL connection pool...");
 const pool = mysql.createPool({
     ...connectionConfig,
     waitForConnections: true,
