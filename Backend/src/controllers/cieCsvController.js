@@ -17,9 +17,9 @@ const uploadFile = async (req, res) => {
 
 const confirmImport = async (req, res) => {
     try {
-        const { batchId, preview } = req.body;
-        if (!batchId || !preview) return res.status(400).json({ error: 'batchId and preview are required' });
-        const result = await cieCsvService.commitImport(batchId, preview);
+        const { batchId } = req.body;
+        if (!batchId) return res.status(400).json({ error: 'batchId is required' });
+        const result = await cieCsvService.commitImport(batchId);
         res.status(200).json({ message: 'Import completed', ...result });
     } catch (error) {
         console.error('CIE CSV confirm error:', error);

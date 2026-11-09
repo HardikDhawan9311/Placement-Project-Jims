@@ -16,10 +16,18 @@ exports.sendBrevoEmail = async ({ to, toName, subject, htmlContent, textContent,
         throw new Error('BREVO_API_KEY is not configured in .env');
     }
 
+    // Use configured sender email instead of hardcoded personal address
+    const senderEmail = process.env.SENDER_EMAIL;
+    const senderName = process.env.SENDER_NAME || 'JIMS Placement Portal';
+
+    if (!senderEmail) {
+        throw new Error('SENDER_EMAIL is not configured in .env');
+    }
+
     const payload = {
         sender: { 
-            name: "JIMS Placement Portal", 
-            email: "hardikdhawan9311@gmail.com" 
+            name: senderName, 
+            email: senderEmail
         },
         to: [{ 
             email: to, 
@@ -45,7 +53,7 @@ exports.sendBrevoEmail = async ({ to, toName, subject, htmlContent, textContent,
             'api-key': apiKey,
             'content-type': 'application/json',
             'accept': 'application/json',
-            'content-length': data.length
+            'content-length': Buffer.byteLength(data)  // Use byte length, not character count
         }
     };
 

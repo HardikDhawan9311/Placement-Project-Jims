@@ -8,7 +8,11 @@ const verifyToken = (req, res, next) => {
     }
 
     try {
-        const secret = process.env.JWT_SECRET || 'my_super_secret_jwt_key';
+        const secret = process.env.JWT_SECRET;
+        if (!secret) {
+            console.error('FATAL: JWT_SECRET is not configured in environment variables.');
+            return res.status(500).json({ error: 'Server configuration error.' });
+        }
         const decoded = jwt.verify(token, secret);
         req.user = decoded;
         next();

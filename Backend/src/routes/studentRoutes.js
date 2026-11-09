@@ -1,6 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const studentController = require('../controllers/studentController');
+const { verifyToken } = require('../middleware/authMiddleware');
+
+// All student routes require authentication
+router.use(verifyToken);
 
 // Get all students (with optional filters)
 router.get('/', studentController.getAllStudents);

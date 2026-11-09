@@ -1,28 +1,9 @@
-import { useState, useEffect } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
+import { useEffect } from 'react';
+import { useNavigate, useLocation, Outlet } from 'react-router-dom';
 import { Toaster } from '../components/ui/sonner';
 import { Sidebar } from '../components/Sidebar';
-import { EnhancedTopBar } from '../components/EnhancedTopBar';
-import { StudentFilters } from '../components/StudentFilters';
-import { StudentTable } from '../components/StudentTable';
-import { SelectionActionBar } from '../components/SelectionActionBar';
-import { EmailModal } from '../components/EmailModal';
-import { NotifyStudentsModal } from '../components/NotifyStudentsModal';
-import { StudentProfile } from '../pages/StudentProfile';
-import { AdminUploadPanel } from '../pages/AdminUploadPanel';
-import { UserApproval } from '../pages/UserApproval';
-import { BulkPasteModal } from '../components/BulkPasteModal';
-import { BulkSearchIndicator } from '../components/BulkSearchIndicator';
-import { FilterResultIndicator } from '../components/ui/FilterResultIndicator';
-import { EmptySearchState } from '../components/ui/EmptySearchState';
-import { DashboardOverviewCharts } from '../components/DashboardOverviewCharts';
-import { Companies } from '../pages/Companies';
-import { CompanyImportPanel } from '../pages/CompanyImportPanel';
-import { CieMarksImportPanel } from '../pages/CieMarksImportPanel';
-import { MockTestsImportPanel } from '../pages/MockTestsImportPanel';
 import useStudentStore from '../store/useStudentStore';
 import useAuthStore from '../store/useAuthStore';
-
 import { UserPending } from './UserPending';
 
 export function MainDashboard() {
@@ -34,16 +15,9 @@ export function MainDashboard() {
 
   const {
     students,
-    filteredStudents,
-    filters,
-    searchTokens,
-    allSkills,
     isLoading,
     error,
     fetchStudents,
-    setFilters,
-    setSearchTokens,
-    resetFilters,
   } = useStudentStore();
 
   const path = location.pathname.replace(/^\/+/, '');
@@ -64,52 +38,17 @@ export function MainDashboard() {
 
   useEffect(() => {
     fetchStudents();
-  }, [fetchStudents]);
-
-  // Reset selected students when navigating between sidebar views
-  useEffect(() => {
-    setSelectedStudents([]);
-    setSelectedStudent(null);
-  }, [location.pathname]);
-
-  const [selectedStudents, setSelectedStudents] = useState([]);
-  const [selectedStudent, setSelectedStudent] = useState(null);
-  const [isEmailModalOpen, setIsEmailModalOpen] = useState(false);
-  const [isNotifyModalOpen, setIsNotifyModalOpen] = useState(false);
-  const [isBulkPasteModalOpen, setIsBulkPasteModalOpen] = useState(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleNavigate = (view) => {
     navigate(`/${view}`);
-  };
-
-  const handleSelectStudent = (studentId) => {
-    setSelectedStudents(prev => 
-      prev.includes(studentId) 
-        ? prev.filter(id => id !== studentId)
-        : [...prev, studentId]
-    );
-  };
-
-  const handleSelectAll = (selected) => {
-    setSelectedStudents(selected ? filteredStudents.map(s => s.student_id) : []);
-  };
-
-  const handleViewProfile = (student) => {
-    setSelectedStudent(student);
-  };
-
-  const handleBackToList = () => {
-    setSelectedStudent(null);
   };
 
   const handleLogout = () => {
     logout();
     navigate('/login');
   };
-
-  // Optimization: useMemo for calculations if needed, though Zustand handles most of it
-  const matchedCount = filteredStudents.length;
-  const totalCount = students.length;
 
   // Render Student's Pending View if role is student ('user')
   if (userRole === 'user') {
@@ -142,138 +81,11 @@ export function MainDashboard() {
                 Try again
               </button>
             </div>
-          ) : selectedStudent ? (
-            <StudentProfile 
-              student={selectedStudent}
-              onBack={handleBackToList}
-              onNotify={() => {
-                setSelectedStudents([selectedStudent.student_id]);
-                setIsNotifyModalOpen(true);
-              }}
-              onSendToCompany={() => {
-                setSelectedStudents([selectedStudent.student_id]);
-                setIsEmailModalOpen(true);
-              }}
-            />
-          ) : activeView === 'admin' ? (
-            <AdminUploadPanel />
-          ) : activeView === 'dashboard' ? (
-            <div className="space-y-6">
-              <div>
-                <h2 className="text-2xl font-bold text-gray-900">Dashboard</h2>
-                {/* <p className="text-sm text-gray-500 mt-1">Overview of student distribution and placement trends.</p> */}
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div className="bg-white rounded-xl border border-gray-100 p-5 shadow-sm">
-                  <p className="text-sm text-gray-500">Total Students</p>
-                  <p className="text-3xl font-bold text-gray-900 mt-1">{students.length}</p>
-                </div>
-                <div className="bg-white rounded-xl border border-gray-100 p-5 shadow-sm">
-                  <p className="text-sm text-gray-500">Placed Students</p>
-                  <p className="text-3xl font-bold text-emerald-600 mt-1">
-                    {students.filter(s => (s.placement_status || '').toLowerCase() === 'placed').length}
-                  </p>
-                </div>
-                <div className="bg-white rounded-xl border border-gray-100 p-5 shadow-sm">
-                  <p className="text-sm text-gray-500">In Process</p>
-                  <p className="text-3xl font-bold text-indigo-600 mt-1">
-                    {students.filter(s => (s.placement_status || 'in-process').toLowerCase() !== 'placed').length}
-                  </p>
-                </div>
-              </div>
-
-              <DashboardOverviewCharts students={students} />
-            </div>
-          ) : activeView === 'students' ? (
-            <div className="space-y-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-2xl font-bold text-gray-900">Student</h2>
-                </div>
-              </div>
-              
-              <BulkSearchIndicator 
-                activeSearchCount={searchTokens.length}
-                onClearAll={() => setSearchTokens([])}
-              />
-              
-              <StudentFilters
-                filters={filters}
-                onFilterChange={setFilters}
-                onApplyFilters={() => {}} // Store auto-applies
-                onResetFilters={resetFilters}
-                userRole={userRole}
-                allStudents={students}
-                searchTokens={searchTokens}
-                onSearchTokensChange={setSearchTokens}
-                onBulkPasteClick={() => setIsBulkPasteModalOpen(true)}
-                allSkills={allSkills}
-              />
-              
-              <FilterResultIndicator
-                matchedCount={matchedCount}
-                totalCount={totalCount}
-                searchTokenCount={searchTokens.length}
-              />
-              
-              {matchedCount === 0 && searchTokens.length > 0 ? (
-                <EmptySearchState onClear={() => setSearchTokens([])} />
-              ) : (
-                <StudentTable
-                  students={filteredStudents}
-                  selectedStudents={selectedStudents}
-                  onSelectStudent={handleSelectStudent}
-                  onSelectAll={handleSelectAll}
-                  onViewProfile={handleViewProfile}
-                  searchTokens={searchTokens}
-                />
-              )}
-            </div>
-          ) : activeView === 'user-approval' ? (
-            <UserApproval />
-          ) : activeView === 'companies' ? (
-            <Companies />
-          ) : activeView === 'company-import' ? (
-            <CompanyImportPanel />
-          ) : activeView === 'cie-import' ? (
-            <CieMarksImportPanel />
-          ) : activeView === 'mock-import' ? (
-            <MockTestsImportPanel />
           ) : (
-            <div className="text-center py-12">
-              <h2 className="text-2xl font-bold text-gray-900">
-                {activeView.charAt(0).toUpperCase() + activeView.slice(1)}
-              </h2>
-              <p className="text-gray-500 mt-2">This section is under development</p>
-            </div>
+            <Outlet />
           )}
         </main>
       </div>
-
-      <SelectionActionBar
-        selectedCount={selectedStudents.length}
-        onSendToCompany={() => setIsEmailModalOpen(true)}
-        onNotifyStudents={() => setIsNotifyModalOpen(true)}
-      />
-
-      <EmailModal
-        isOpen={isEmailModalOpen}
-        onClose={() => setIsEmailModalOpen(false)}
-        selectedStudents={students.filter(s => selectedStudents.includes(s.student_id))}
-      />
-
-      <NotifyStudentsModal
-        isOpen={isNotifyModalOpen}
-        onClose={() => setIsNotifyModalOpen(false)}
-        selectedStudents={students.filter(s => selectedStudents.includes(s.student_id))}
-      />
-
-      <BulkPasteModal
-        isOpen={isBulkPasteModalOpen}
-        onClose={() => setIsBulkPasteModalOpen(false)}
-        onApply={(names) => setSearchTokens([...searchTokens, ...names])}
-      />
 
       <Toaster />
     </div>

@@ -43,6 +43,10 @@ export function AdminUploadPanel() {
         toast.error('Please upload a .csv or .xlsx file');
         return;
       }
+      if (selectedFile.size > 5 * 1024 * 1024) {
+        toast.error('File size exceeds the 5MB limit. Please upload a smaller file.');
+        return;
+      }
       setFile(selectedFile);
     }
   };
