@@ -95,7 +95,7 @@ export function SignUp() {
               </div>
 
               <div className="space-y-1.5 flex flex-col items-start">
-                <label htmlFor="role" className="text-sm font-medium leading-none">Select Role</label>
+                <label htmlFor="role" className="text-sm font-medium leading-none">Account Type</label>
                 <select
                   id="role"
                   value={formData.role}
@@ -103,7 +103,6 @@ export function SignUp() {
                   className="flex h-10 w-full rounded-md border border-gray-300 bg-transparent px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-600 cursor-pointer"
                 >
                   <option value="placement_officer">Placement Officer</option>
-                  <option value="admin">Admin</option>
                 </select>
               </div>
 

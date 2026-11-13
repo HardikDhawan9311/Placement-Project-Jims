@@ -6,21 +6,27 @@ let connectionConfig;
 
 if (process.env.MYSQL_PUBLIC_URL || process.env.DATABASE_URL) {
     const dbUrl = process.env.MYSQL_PUBLIC_URL || process.env.DATABASE_URL;
-    
+
     // Check if it's actually a URL (contains ://)
     if (dbUrl.includes('://')) {
         console.log("📝 Using Database URL connection strategy");
         try {
             const parsed = new URL(dbUrl);
+            const isLocalhost = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1';
+
             connectionConfig = {
                 host: parsed.hostname,
                 port: parsed.port || 3306,
                 user: parsed.username,
-                password: parsed.password, // Already decoded by new URL()
+                password: decodeURIComponent(parsed.password),
                 database: (parsed.pathname || '/').replace('/', ''),
-                ssl: {
-                    rejectUnauthorized: false
-                }
+                ...(isLocalhost ? {} : {
+                    ssl: {
+                        // In production (remote hosts), validate certificates by default.
+                        // Set DB_SSL_REJECT_UNAUTHORIZED=false only for dev/testing environments.
+                        rejectUnauthorized: process.env.DB_SSL_REJECT_UNAUTHORIZED !== 'false'
+                    }
+                })
             };
             console.log("✅ Database URL parsed successfully for host:", connectionConfig.host);
         } catch (err) {
@@ -30,7 +36,6 @@ if (process.env.MYSQL_PUBLIC_URL || process.env.DATABASE_URL) {
         }
     } else {
         console.warn("⚠️ DATABASE_URL detected but it lacks a protocol (e.g., mysql://). Falling back to individual variables.");
-        // We let it fall through to the individual variables logic below
     }
 }
 
@@ -277,6 +282,16 @@ const initializeDatabase = async () => {
                 FOREIGN KEY (batch_id) REFERENCES import_logs(id) ON DELETE CASCADE
             )
         `);
+
+        // Optimize tracking queries
+        try {
+            await promisePool.query('CREATE INDEX idx_student_status ON applications (student_id, status)');
+        } catch(e) { 
+            // Ignore if index already exists
+            if (e.code !== 'ER_DUP_KEYNAME') {
+                console.error("Non-fatal error creating index:", e.message);
+            }
+        }
 
         console.log("✅ All database tables initialized successfully.");
     } catch (err) {

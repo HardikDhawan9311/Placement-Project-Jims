@@ -7,6 +7,7 @@ import { Label } from '../components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../components/ui/select';
 import { ImageWithFallback } from '../components/figma/ImageWithFallback';
 import useAuthStore from '../store/useAuthStore';
+import axiosInstance from '../api/axiosInstance';
 
 export function LoginPage() {
   const navigate = useNavigate();
@@ -29,6 +30,19 @@ export function LoginPage() {
     } catch (err) {
       console.error('Login error:', err);
       toast.error(err.message || "Invalid credentials. Please try again.");
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    if (!email) {
+      toast.error("Please enter your email first to recover your password");
+      return;
+    }
+    try {
+      await axiosInstance.post('/api/users/forgot-password', { email });
+      toast.success("Password recovery instructions have been sent to your email.");
+    } catch (err) {
+      toast.error(err.response?.data?.error || "Password recovery is currently unavailable.");
     }
   };
 
@@ -63,7 +77,7 @@ export function LoginPage() {
 
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="email text-left block">Email</Label>
+                <Label htmlFor="email" className="text-left block">Email</Label>
                 <Input
                   id="email"
                   type="email"
@@ -75,7 +89,7 @@ export function LoginPage() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="password text-left block">Password</Label>
+                <Label htmlFor="password" className="text-left block">Password</Label>
                 <Input
                   id="password"
                   type="password"
@@ -87,9 +101,9 @@ export function LoginPage() {
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="role text-left block">Role</Label>
+                <Label htmlFor="role" className="text-left block">Role</Label>
                 <Select value={role} onValueChange={setRole} required>
-                  <SelectTrigger>
+                  <SelectTrigger id="role">
                     <SelectValue placeholder="Select your role" />
                   </SelectTrigger>
                   <SelectContent>
@@ -110,7 +124,7 @@ export function LoginPage() {
               <div className="flex items-center justify-between mt-2">
                 <button
                   type="button"
-                  onClick={() => toast.info("Password reset feature is coming soon. Please contact the administrator.")}
+                  onClick={handleForgotPassword}
                   className="text-sm text-indigo-600 hover:text-indigo-700 hover:underline font-medium"
                 >
                   Forgot Password?

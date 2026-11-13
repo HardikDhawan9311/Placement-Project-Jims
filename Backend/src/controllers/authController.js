@@ -4,7 +4,7 @@ const jwt = require('jsonwebtoken');
 
 exports.signup = async (req, res) => {
     try {
-        const { name, email, password, role } = req.body;
+        const { name, email, password } = req.body;
 
         if (!name || !email || !password) {
             return res.status(400).json({ error: 'All fields are required' });
@@ -21,8 +21,8 @@ exports.signup = async (req, res) => {
         const hashedPassword = await bcrypt.hash(password, salt);
 
         // Insert user (default is_approved to 0)
-        // We allow the role from body, but default to 'user'
-        const userRole = role || 'user';
+        // Always force role to 'user' on public signup to prevent privilege escalation
+        const userRole = 'user';
         const result = await db.query(
             'INSERT INTO users (name, email, password, role, is_approved) VALUES (?, ?, ?, ?, 0)',
             [name, email, hashedPassword, userRole]
@@ -53,10 +53,10 @@ exports.signin = async (req, res) => {
 
         const user = rows[0];
 
-        // 1. Role Check
+        // 1. Role Check — generic message to avoid revealing actual role
         if (user.role !== role) {
             return res.status(401).json({ 
-                error: `Role mismatch. This account is registered as a ${user.role.replace('_', ' ')}. Please select the correct role.` 
+                error: 'Invalid email or password.' 
             });
         }
 
@@ -75,7 +75,11 @@ exports.signin = async (req, res) => {
 
         // Create JWT
         const payload = { id: user.id, email: user.email, role: user.role };
-        const secret = process.env.JWT_SECRET || 'my_super_secret_jwt_key';
+        const secret = process.env.JWT_SECRET;
+        if (!secret) {
+            console.error('FATAL: JWT_SECRET is not configured in environment variables.');
+            return res.status(500).json({ error: 'Server configuration error.' });
+        }
         const token = jwt.sign(payload, secret, { expiresIn: '1d' });
 
         res.json({ 
@@ -101,8 +105,11 @@ exports.forgotPassword = async (req, res) => {
             return res.status(400).json({ error: 'Email is required' });
         }
         
-        // Mock success response
-        res.json({ message: 'If this email is registered, you will receive a reset link shortly.' });
+        // Feature not yet implemented — return a consistent message
+        // to avoid revealing whether an email exists in the system
+        res.status(501).json({ 
+            error: 'Password reset is not yet available. Please contact the administrator to reset your password.' 
+        });
     } catch (err) {
         console.error('Forgot password error:', err);
         res.status(500).json({ error: 'Server error during forgot password' });

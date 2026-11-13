@@ -42,10 +42,14 @@ export function NotifyStudentsModal({ isOpen, onClose, selectedStudents = [] }) 
 
       const { sent, failed } = response.data;
 
-      if (failed.length === 0) {
-        toast.success(`✅ All ${sent.length} students notified successfully!`);
+      if (sent.length === 0) {
+        toast.error('Failed to notify students.', {
+          description: `${failed.map(f => `${f.name}: ${f.reason}`).join('; ')}`
+        });
+      } else if (failed.length === 0) {
+        toast.success(`✅ All ${sent.length} student${sent.length > 1 ? 's' : ''} notified successfully!`);
       } else {
-        toast.success(`Sent to ${sent.length} students.`, {
+        toast.warning(`Sent to ${sent.length} student${sent.length > 1 ? 's' : ''}.`, {
           description: `${failed.length} failed: ${failed.map(f => f.name).join(', ')}`
         });
       }

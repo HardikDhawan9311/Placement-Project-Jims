@@ -1,6 +1,7 @@
 const xlsx = require('xlsx');
 const db = require('../config/db');
 const { placementFromSpreadsheet } = require('../utils/placementNormalize');
+const C = require('../utils/csvColumns');
 
 // Safe JSON parsing helper to handle MySQL driver double-parsing or weird stringification
 const safeParseJSON = (data) => {
@@ -55,23 +56,26 @@ class ImportService {
 
         const stagedRows = [];
         
-        // 2. Process and Validate rows one by one (Staging)
-        for (let i = 0; i < rows.length; i++) {
-            const rawData = rows[i];
-            const validationResult = this.validateRow(rawData);
-            
-            await db.query(
-                `INSERT INTO import_staging 
-                (batch_id, import_row_number, enrollment_no, raw_data_json, validation_status, error_message) 
-                VALUES (?, ?, ?, ?, ?, ?)`,
-                [
+        // 2. Process and Validate rows (Staging)
+        if (rows.length > 0) {
+            const values = rows.map((rawData, i) => {
+                const validationResult = this.validateRow(rawData);
+                return [
                     batchId, 
                     i + 1, 
-                    rawData['Enrollment No.'] || null, 
+                    rawData[C.ENROLLMENT_NO] || null, 
                     JSON.stringify(rawData), 
                     validationResult.status, 
                     validationResult.error
-                ]
+                ];
+            });
+
+            // Batch insert for performance
+            await db.query(
+                `INSERT INTO import_staging 
+                (batch_id, import_row_number, enrollment_no, raw_data_json, validation_status, error_message) 
+                VALUES ?`,
+                [values]
             );
         }
 
@@ -84,9 +88,9 @@ class ImportService {
     validateRow(row) {
         const errors = [];
 
-        if (!row['Enrollment No.']) errors.push("Enrollment No. is required");
-        if (!row['Student Name']) errors.push("Student Name is required");
-        if (!row['Course']) errors.push("Course is required");
+        if (!row[C.ENROLLMENT_NO]) errors.push("Enrollment No. is required");
+        if (!row[C.STUDENT_NAME]) errors.push("Student Name is required");
+        if (!row[C.COURSE]) errors.push("Course is required");
 
         // Basic numeric validations
         const checkNumeric = (field, label) => {
@@ -95,7 +99,7 @@ class ImportService {
             }
         };
 
-        ['10th %', '12th %', 'Graduation %', 'Sem 1 SGPA', 'Sem 2 SGPA', 'Sem 3 SGPA', 'Sem 4 SGPA', 'Sem 5 SGPA', 'Sem 6 SGPA'].forEach(field => {
+        [C.PERCENTAGE_10TH, C.PERCENTAGE_12TH, C.GRAD_PERCENTAGE, C.semSGPA(1), C.semSGPA(2), C.semSGPA(3), C.semSGPA(4), C.semSGPA(5), C.semSGPA(6)].forEach(field => {
             if (row[field] && row[field] !== 'NA') checkNumeric(field, field);
         });
 
@@ -118,52 +122,54 @@ class ImportService {
         let successCount = 0;
         let failCount = 0;
 
-        for (const staged of stagedRows) {
-            const data = safeParseJSON(staged.raw_data_json);
-            const connection = await db.getConnection();
-            
-            try {
-                await connection.beginTransaction();
+        const connection = await db.getConnection();
 
-                // 1. Upsert Student Core
-                const enrollmentNo = data['Enrollment No.'];
-                const studentId = await this.upsertStudent(connection, data);
+        try {
+            for (const staged of stagedRows) {
+                const data = safeParseJSON(staged.raw_data_json);
+                
+                try {
+                    await connection.beginTransaction();
 
-                // 2. Upsert Academics (10th, 12th, Graduation)
-                await this.upsertAcademics(connection, studentId, data);
+                    // 1. Upsert Student Core
+                    const studentId = await this.upsertStudent(connection, data);
 
-                // 3. Upsert Semesters
-                await this.upsertSemesters(connection, studentId, data);
+                    // 2. Upsert Academics (10th, 12th, Graduation)
+                    await this.upsertAcademics(connection, studentId, data);
 
-                // 4. Upsert Family
-                await this.upsertFamily(connection, studentId, data);
+                    // 3. Upsert Semesters
+                    await this.upsertSemesters(connection, studentId, data);
 
-                // 5. Upsert Gaps
-                await this.upsertGaps(connection, studentId, data);
+                    // 4. Upsert Family
+                    await this.upsertFamily(connection, studentId, data);
 
-                // 6. Upsert Experiences
-                await this.upsertExperiences(connection, studentId, data);
+                    // 5. Upsert Gaps
+                    await this.upsertGaps(connection, studentId, data);
 
-                // 7. Upsert Placements
-                await this.upsertPlacements(connection, studentId, data);
+                    // 6. Upsert Experiences
+                    await this.upsertExperiences(connection, studentId, data);
 
-                // 8. Upsert Addresses
-                await this.upsertAddresses(connection, studentId, data);
+                    // 7. Upsert Placements
+                    await this.upsertPlacements(connection, studentId, data);
 
-                await connection.commit();
-                successCount++;
-            } catch (err) {
-                await connection.rollback();
-                console.error(`Error importing row ${staged.import_row_number} (${data['Enrollment No.']}):`, err);
-                failCount++;
-                // Update staging with commit error
-                await db.query(
-                    'UPDATE import_staging SET validation_status = "invalid", error_message = ? WHERE id = ?',
-                    [`Commit failed: ${err.message}`, staged.id]
-                );
-            } finally {
-                connection.release();
+                    // 8. Upsert Addresses
+                    await this.upsertAddresses(connection, studentId, data);
+
+                    await connection.commit();
+                    successCount++;
+                } catch (err) {
+                    await connection.rollback();
+                    console.error(`Error importing row ${staged.import_row_number} (${data[C.ENROLLMENT_NO]}):`, err);
+                    failCount++;
+                    // Update staging with commit error
+                    await connection.query(
+                        'UPDATE import_staging SET validation_status = "invalid", error_message = ? WHERE id = ?',
+                        [`Commit failed: ${err.message}`, staged.id]
+                    );
+                }
             }
+        } finally {
+            connection.release();
         }
 
         // Update import log
@@ -179,16 +185,18 @@ class ImportService {
         const parseDate = (d) => {
             if (!d || d === 'NA') return null;
             if (typeof d === 'number') {
-                // Handle Excel serial dates if needed, but here we assume DD/MM/YYYY
-                return null; 
+                // Excel dates are days since 1899-12-30
+                const excelEpoch = new Date(Date.UTC(1899, 11, 30));
+                const date = new Date(excelEpoch.getTime() + d * 86400000);
+                return date.toISOString().split('T')[0];
             }
             const parts = d.split('/');
             if (parts.length === 3) return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
             return null;
         };
 
-        const skills = data['Technical Skills'] 
-            ? data['Technical Skills'].split(/[|,\n]/).map(s => s.trim()).filter(Boolean).join(', ')
+        const skills = data[C.TECHNICAL_SKILLS] 
+            ? data[C.TECHNICAL_SKILLS].split(/[|,\n]/).map(s => s.trim()).filter(Boolean).join(', ')
             : '';
 
         const [result] = await connection.query(`
@@ -196,39 +204,36 @@ class ImportService {
             (name, enrollment_no, college_shift, primary_email, student_email, phone, gender, dob, linkedin, github, skills, pan_india, residence_type, course)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON DUPLICATE KEY UPDATE 
+            student_id=LAST_INSERT_ID(student_id),
             name=VALUES(name), college_shift=VALUES(college_shift), primary_email=VALUES(primary_email), 
             student_email=VALUES(student_email), phone=VALUES(phone), gender=VALUES(gender), 
             dob=VALUES(dob), linkedin=VALUES(linkedin), github=VALUES(github), skills=VALUES(skills), 
             pan_india=VALUES(pan_india), residence_type=VALUES(residence_type), course=VALUES(course)
         `, [
-            data['Student Name'],
-            data['Enrollment No.'],
-            data['College Shift'] || 'Morning',
-            data['Primary Email ID'],
-            data['Student JIMS Email Id'],
-            data['Mobile Number'],
-            data['Gender'],
-            parseDate(data['Date of Birth (DD/MM/YYYY Format Only)']),
-            data['LinkedIn Profile Link'],
-            data['GitHub Profile Link'],
+            data[C.STUDENT_NAME],
+            data[C.ENROLLMENT_NO],
+            data[C.COLLEGE_SHIFT] || 'Morning',
+            data[C.PRIMARY_EMAIL],
+            data[C.STUDENT_EMAIL],
+            data[C.MOBILE_NUMBER],
+            data[C.GENDER],
+            parseDate(data[C.DOB]),
+            data[C.LINKEDIN],
+            data[C.GITHUB],
             skills,
-            data['Open to Pan India Location'] === 'Yes' ? 1 : 0,
-            data['Student Residence / Belong to'],
-            data['Course']
+            data[C.PAN_INDIA] === 'Yes' ? 1 : 0,
+            data[C.RESIDENCE],
+            data[C.COURSE]
         ]);
 
-        if (result.insertId) return result.insertId;
-        
-        // If updated, fetch the ID
-        const [lookup] = await connection.query('SELECT student_id FROM students WHERE enrollment_no = ?', [data['Enrollment No.']]);
-        return lookup[0].student_id;
+        return result.insertId;
     }
 
     async upsertAcademics(connection, studentId, data) {
         const levels = [
-            { level: '10th', board: '10th Board Name', year: '10th passing Year', pct: '10th %' },
-            { level: '12th', board: '12th Board Name', year: '12th Passing Year', pct: '12th %', stream: '12th Stream' },
-            { level: 'Graduation', board: 'Graduation College/ Institute Name', year: 'Graduation Passing Year', pct: 'Graduation %', stream: 'Graduation Stream' }
+            { level: '10th', board: C.BOARD_10TH, year: C.PASSING_YEAR_10TH, pct: C.PERCENTAGE_10TH },
+            { level: '12th', board: C.BOARD_12TH, year: C.PASSING_YEAR_12TH, pct: C.PERCENTAGE_12TH, stream: C.STREAM_12TH },
+            { level: 'Graduation', board: C.GRAD_COLLEGE, year: C.GRAD_PASSING_YEAR, pct: C.GRAD_PERCENTAGE, stream: C.GRAD_STREAM }
         ];
 
         for (const l of levels) {
@@ -246,7 +251,7 @@ class ImportService {
 
     async upsertSemesters(connection, studentId, data) {
         for (let i = 1; i <= 6; i++) {
-            const sgpa = data[`Sem ${i} SGPA`];
+            const sgpa = data[C.semSGPA(i)];
             if (sgpa && sgpa !== 'NA') {
                 await connection.query(`
                     INSERT INTO academic_semesters (student_id, semester_number, sgpa)
@@ -258,7 +263,7 @@ class ImportService {
     }
 
     async upsertFamily(connection, studentId, data) {
-        if (data['Fathers Name'] || data['Mothers Name']) {
+        if (data[C.FATHER_NAME] || data[C.MOTHER_NAME]) {
             await connection.query(`
                 INSERT INTO family (student_id, father_name, father_occupation, father_email, father_phone, mother_name, mother_phone, mother_email)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -266,40 +271,40 @@ class ImportService {
                 father_name=VALUES(father_name), father_occupation=VALUES(father_occupation), father_email=VALUES(father_email), 
                 father_phone=VALUES(father_phone), mother_name=VALUES(mother_name), mother_phone=VALUES(mother_phone), mother_email=VALUES(mother_email)
             `, [
-                studentId, data['Fathers Name'], data['Father Occupation'], data['Fathers Email ID'], 
-                data['Father Mobile No.'], data['Mothers Name'], data['Mothers Mobile Number'], data['Mothers Email ID']
+                studentId, data[C.FATHER_NAME], data[C.FATHER_OCCUPATION], data[C.FATHER_EMAIL], 
+                data[C.FATHER_MOBILE], data[C.MOTHER_NAME], data[C.MOTHER_MOBILE], data[C.MOTHER_EMAIL]
             ]);
         }
     }
 
     async upsertGaps(connection, studentId, data) {
-        if (data['Any Gap']) {
+        if (data[C.ANY_GAP]) {
             await connection.query(`
                 INSERT INTO gaps (student_id, has_gap, reason)
                 VALUES (?, ?, ?)
                 ON DUPLICATE KEY UPDATE has_gap=VALUES(has_gap), reason=VALUES(reason)
-            `, [studentId, data['Any Gap'] === 'Yes' ? 1 : 0, data['Reason of Gap ( if no gap , write NA)']]);
+            `, [studentId, data[C.ANY_GAP] === 'Yes' ? 1 : 0, data[C.GAP_REASON]]);
         }
     }
 
     async upsertExperiences(connection, studentId, data) {
-        if (data['Any previous work Experience'] || data['Internship /Project Details ( otherwise write NA)']) {
+        if (data[C.PREVIOUS_EXPERIENCE] || data[C.INTERNSHIP_DETAILS]) {
             await connection.query(`
                 INSERT INTO experiences (student_id, has_experience, description, internship_details)
                 VALUES (?, ?, ?, ?)
                 ON DUPLICATE KEY UPDATE has_experience=VALUES(has_experience), description=VALUES(description), internship_details=VALUES(internship_details)
             `, [
-                studentId, data['Any previous work Experience'] === 'Yes' ? 1 : 0, 
-                data['What you have done'], data['Internship /Project Details ( otherwise write NA)']
+                studentId, data[C.PREVIOUS_EXPERIENCE] === 'Yes' ? 1 : 0, 
+                data[C.EXPERIENCE_DESC], data[C.INTERNSHIP_DETAILS]
             ]);
         }
     }
 
     async upsertPlacements(connection, studentId, data) {
-        if (data['Placed Company Name'] || data['Current Placement Status'] || data['Any Previous campus selection/ offer in Graduation.']) {
+        if (data[C.PLACED_COMPANY] || data[C.PLACEMENT_STATUS] || data[C.CAMPUS_OFFER]) {
             const { company, status } = placementFromSpreadsheet(
-                data['Placed Company Name'],
-                data['Current Placement Status']
+                data[C.PLACED_COMPANY],
+                data[C.PLACEMENT_STATUS]
             );
             await connection.query(`
                 INSERT INTO placements (student_id, campus_offer, company, status)
@@ -307,7 +312,7 @@ class ImportService {
                 ON DUPLICATE KEY UPDATE campus_offer=VALUES(campus_offer), company=VALUES(company), status=VALUES(status)
             `, [
                 studentId,
-                data['Any Previous campus selection/ offer in Graduation.'] || null,
+                data[C.CAMPUS_OFFER] || null,
                 company,
                 status,
             ]);
@@ -315,17 +320,17 @@ class ImportService {
     }
 
     async upsertAddresses(connection, studentId, data) {
-        if (data['Permanent Address']) {
+        if (data[C.PERMANENT_ADDRESS]) {
             await connection.query(`
                 INSERT INTO addresses (student_id, type, address) VALUES (?, 'Permanent', ?)
                 ON DUPLICATE KEY UPDATE address=VALUES(address)
-            `, [studentId, data['Permanent Address']]);
+            `, [studentId, data[C.PERMANENT_ADDRESS]]);
         }
-        if (data['Current Address']) {
+        if (data[C.CURRENT_ADDRESS]) {
             await connection.query(`
                 INSERT INTO addresses (student_id, type, address) VALUES (?, 'Local', ?)
                 ON DUPLICATE KEY UPDATE address=VALUES(address)
-            `, [studentId, data['Current Address']]);
+            `, [studentId, data[C.CURRENT_ADDRESS]]);
         }
     }
 

@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const { verifyToken } = require('../middleware/authMiddleware');
 const { 
     getCompanies, 
     getTrackingData, 
@@ -7,6 +8,9 @@ const {
     sendMassMail,
     createCompany
 } = require('../controllers/companyController');
+
+// All company routes require authentication
+router.use(verifyToken);
 
 // Define routes
 router.get('/', getCompanies);
@@ -16,4 +20,3 @@ router.get('/non-applicants', getNonApplicants);
 router.post('/send-mail', sendMassMail);
 
 module.exports = router;
-

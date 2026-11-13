@@ -2,10 +2,10 @@
   "name": "placement-project-jims",
   "version": "1.0.0",
   "description": "Root package for Placement Project Jims",
-  "main": "backend/server.js",
+  "main": "Backend/server.js",
   "scripts": {
-    "build": "npm install --prefix client && npm run build --prefix client && npm install --prefix backend",
-    "start": "npm start --prefix backend"
+    "build": "npm install --prefix client && npm run build --prefix client && npm install --prefix Backend",
+    "start": "npm start --prefix Backend"
   },
   "keywords": [],
   "author": "",

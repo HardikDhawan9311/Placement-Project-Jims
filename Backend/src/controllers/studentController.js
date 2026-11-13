@@ -1,5 +1,6 @@
 const db = require('../config/db');
 const emailService = require('../services/emailService');
+const importService = require('../services/importService');
 const {
     normalizeStudentListRow,
     normalizePlacementRow,
@@ -17,15 +18,19 @@ exports.getAllStudents = async (req, res) => {
         // Base query joins students with their academic records for filtering
         let sql = `
             SELECT 
-                s.*, 
-                (SELECT percentage FROM academics a10 WHERE a10.student_id = s.student_id AND a10.level = '10th' LIMIT 1) as percentage_10th,
-                (SELECT percentage FROM academics a12 WHERE a12.student_id = s.student_id AND a12.level = '12th' LIMIT 1) as percentage_12th,
-                (SELECT percentage FROM academics aGrad WHERE aGrad.student_id = s.student_id AND aGrad.level = 'Graduation' LIMIT 1) as percentage_grad,
-                (SELECT percentage FROM academics aGrad WHERE aGrad.student_id = s.student_id AND aGrad.level = 'Graduation' LIMIT 1) as aggregate_percentage,
-                (SELECT AVG(sgpa) FROM academic_semesters sem WHERE sem.student_id = s.student_id) as current_cgpa,
+                s.student_id, s.name, s.enrollment_no, s.course, s.student_email, s.primary_email, s.phone, s.gender, s.skills, s.pan_india, s.residence_type,
+                a10.percentage as percentage_10th,
+                a12.percentage as percentage_12th,
+                aGrad.percentage as percentage_grad,
+                aGrad.percentage as aggregate_percentage,
+                sem.current_cgpa,
                 p.company as placed_company,
                 p.status as placement_status
             FROM students s
+            LEFT JOIN academics a10 ON s.student_id = a10.student_id AND a10.level = '10th'
+            LEFT JOIN academics a12 ON s.student_id = a12.student_id AND a12.level = '12th'
+            LEFT JOIN academics aGrad ON s.student_id = aGrad.student_id AND aGrad.level = 'Graduation'
+            LEFT JOIN (SELECT student_id, AVG(sgpa) as current_cgpa FROM academic_semesters GROUP BY student_id) sem ON s.student_id = sem.student_id
             LEFT JOIN placements p ON s.student_id = p.student_id
             WHERE 1=1
         `;
@@ -81,17 +86,24 @@ exports.getStudentAcademicHistory = async (req, res) => {
             db.query('SELECT * FROM academic_semesters WHERE student_id = ?', [studentId])
         ]);
 
-        // 3. For each semester, get nested CIE marks and Mock Tests
-        const academicHistory = await Promise.all(semesters.map(async (sem) => {
-            const [cieMarks] = await db.query('SELECT * FROM cie_marks WHERE semester_id = ?', [sem.id]);
-            const [mockTests] = await db.query('SELECT * FROM mock_tests WHERE semester_id = ?', [sem.id]);
+        // 3. Fetch nested CIE marks and Mock Tests in single batches to avoid N+1 queries
+        let allCieMarks = [];
+        let allMockTests = [];
+        const semesterIds = semesters ? semesters.map(s => s.id).filter(id => id !== undefined && id !== null) : [];
+        if (semesterIds.length > 0) {
+            const placeholders = semesterIds.map(() => '?').join(',');
+            
+            [allCieMarks] = await db.query(`SELECT * FROM cie_marks WHERE semester_id IN (${placeholders})`, semesterIds);
+            [allMockTests] = await db.query(`SELECT * FROM mock_tests WHERE semester_id IN (${placeholders})`, semesterIds);
+        }
 
+        const academicHistory = semesters.map((sem) => {
             return {
                 ...sem,
-                cieMarks,
-                mockTests
+                cieMarks: allCieMarks.filter(m => m.semester_id === sem.id),
+                mockTests: allMockTests.filter(m => m.semester_id === sem.id)
             };
-        }));
+        });
 
         const placementRaw = placements[0] || null;
         res.json({
@@ -131,159 +143,23 @@ exports.bulkUploadStudents = async (req, res) => {
             errors: []
         };
 
-        // Helper to parse date from DD/MM/YYYY to YYYY-MM-DD
-        const parseDate = (dateStr) => {
-            if (!dateStr || dateStr === 'NA') return null;
-            const parts = dateStr.split('/');
-            if (parts.length === 3) {
-                // Return YYYY-MM-DD
-                return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
-            }
-            return null;
-        };
-
         for (const data of students) {
             try {
-                // 1. Insert/Update Core Student Table
-                const [studentRes] = await connection.query(`
-                    INSERT INTO students 
-                    (name, enrollment_no, college_shift, primary_email, student_email, phone, gender, dob, linkedin, github, skills, pan_india, residence_type, course)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ON DUPLICATE KEY UPDATE 
-                    name=VALUES(name), college_shift=VALUES(college_shift), primary_email=VALUES(primary_email), 
-                    student_email=VALUES(student_email), phone=VALUES(phone), gender=VALUES(gender), 
-                    dob=VALUES(dob), linkedin=VALUES(linkedin), github=VALUES(github), skills=VALUES(skills), 
-                    pan_india=VALUES(pan_india), residence_type=VALUES(residence_type), course=VALUES(course)
-                `, [
-                    data['Student Name'],
-                    data['Enrollment No.'],
-                    data['College Shift'],
-                    data['Primary Email ID'],
-                    data['Student JIMS Email Id'],
-                    data['Mobile Number'],
-                    data['Gender'],
-                    parseDate(data['Date of Birth (DD/MM/YYYY Format Only)']),
-                    data['LinkedIn Profile Link'],
-                    data['GitHub Profile Link'],
-                    data['Technical Skills'],
-                    data['Open to Pan India Location'] === 'Yes' ? 1 : 0,
-                    data['Student Residence / Belong to'],
-                    data['Course']
-                ]);
-
-                // Get student_id (either from insert or lookup)
-                let studentId;
-                if (studentRes.insertId) {
-                    studentId = studentRes.insertId;
-                } else {
-                    const [lookup] = await connection.query('SELECT student_id FROM students WHERE enrollment_no = ?', [data['Enrollment No.']]);
-                    studentId = lookup[0].student_id;
-                }
-
-                // 2. Academics (10th, 12th, Grad)
-                const academicLevels = [
-                    { level: '10th', board: data['10th Board Name'], year: data['10th passing Year'], pct: data['10th %'] },
-                    { level: '12th', board: data['12th Board Name'], year: data['12th Passing Year'], pct: data['12th %'], stream: data['12th Stream'] },
-                    { level: 'Graduation', board: data['Graduation College/ Institute Name'], year: data['Graduation Passing Year'], pct: data['Graduation %'], stream: data['Graduation Stream'] }
-                ];
-
-                for (const ac of academicLevels) {
-                    if (ac.board || ac.pct) {
-                        await connection.query(`
-                            INSERT INTO academics (student_id, level, board_or_college, stream, passing_year, percentage)
-                            VALUES (?, ?, ?, ?, ?, ?)
-                            ON DUPLICATE KEY UPDATE board_or_college=VALUES(board_or_college), stream=VALUES(stream), 
-                            passing_year=VALUES(passing_year), percentage=VALUES(percentage)
-                        `, [studentId, ac.level, ac.board, ac.stream || null, ac.year || null, ac.pct || null]);
-                    }
-                }
-
-                // 3. Semester SGPAs
-                for (let i = 1; i <= 6; i++) {
-                    const sgpa = data[`Sem ${i} SGPA`];
-                    if (sgpa && sgpa !== 'NA') {
-                        await connection.query(`
-                            INSERT INTO academic_semesters (student_id, semester_number, sgpa)
-                            VALUES (?, ?, ?)
-                            ON DUPLICATE KEY UPDATE sgpa=VALUES(sgpa)
-                        `, [studentId, i, sgpa]);
-                    }
-                }
-
-                // 4. Family Details
-                if (data['Fathers Name'] || data['Mothers Name']) {
-                    await connection.query(`
-                        INSERT INTO family (student_id, father_name, father_occupation, father_email, father_phone, mother_name, mother_phone, mother_email)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                        ON DUPLICATE KEY UPDATE father_name=VALUES(father_name), father_occupation=VALUES(father_occupation), 
-                        father_email=VALUES(father_email), father_phone=VALUES(father_phone), 
-                        mother_name=VALUES(mother_name), mother_phone=VALUES(mother_phone), mother_email=VALUES(mother_email)
-                    `, [
-                        studentId, data['Fathers Name'], data['Father Occupation'], 
-                        data['Fathers Email ID'], data['Father Mobile No.'],
-                        data['Mothers Name'], data['Mothers Mobile Number'], data['Mothers Email ID']
-                    ]);
-                }
-
-                // 5. Addresses
-                if (data['Permanent Address']) {
-                    await connection.query(`
-                        INSERT INTO addresses (student_id, type, address) VALUES (?, 'Permanent', ?)
-                        ON DUPLICATE KEY UPDATE address=VALUES(address)
-                    `, [studentId, data['Permanent Address']]);
-                }
-                if (data['Current Address']) {
-                    await connection.query(`
-                        INSERT INTO addresses (student_id, type, address) VALUES (?, 'Local', ?)
-                        ON DUPLICATE KEY UPDATE address=VALUES(address)
-                    `, [studentId, data['Current Address']]);
-                }
-
-                // 6. Gaps
-                if (data['Any Gap']) {
-                    await connection.query(`
-                        INSERT INTO gaps (student_id, has_gap, reason) VALUES (?, ?, ?)
-                        ON DUPLICATE KEY UPDATE has_gap=VALUES(has_gap), reason=VALUES(reason)
-                    `, [studentId, data['Any Gap'] === 'Yes' ? 1 : 0, data['Reason of Gap ( if no gap , write NA)']]);
-                }
-
-                // 7. Experiences
-                if (data['Any previous work Experience'] || data['Internship /Project Details ( otherwise write NA)']) {
-                    await connection.query(`
-                        INSERT INTO experiences (student_id, has_experience, description, internship_details)
-                        VALUES (?, ?, ?, ?)
-                        ON DUPLICATE KEY UPDATE has_experience=VALUES(has_experience), 
-                        description=VALUES(description), internship_details=VALUES(internship_details)
-                    `, [
-                        studentId, data['Any previous work Experience'] === 'Yes' ? 1 : 0, 
-                        data['What you have done'], data['Internship /Project Details ( otherwise write NA)']
-                    ]);
-                }
-
-                // 8. Placements
-                if (data['Placed Company Name'] || data['Current Placement Status'] || data['Any Previous campus selection/ offer in Graduation.']) {
-                    const { company, status } = placementFromSpreadsheet(
-                        data['Placed Company Name'],
-                        data['Current Placement Status']
-                    );
-                    await connection.query(`
-                        INSERT INTO placements (student_id, campus_offer, company, status)
-                        VALUES (?, ?, ?, ?)
-                        ON DUPLICATE KEY UPDATE campus_offer=VALUES(campus_offer), 
-                        company=VALUES(company), status=VALUES(status)
-                    `, [
-                        studentId,
-                        data['Any Previous campus selection/ offer in Graduation.'] || null,
-                        company,
-                        status,
-                    ]);
-                }
+                // Delegate to unified importService logic
+                const studentId = await importService.upsertStudent(connection, data);
+                await importService.upsertAcademics(connection, studentId, data);
+                await importService.upsertSemesters(connection, studentId, data);
+                await importService.upsertFamily(connection, studentId, data);
+                await importService.upsertGaps(connection, studentId, data);
+                await importService.upsertExperiences(connection, studentId, data);
+                await importService.upsertPlacements(connection, studentId, data);
+                await importService.upsertAddresses(connection, studentId, data);
 
                 results.processed++;
             } catch (rowErr) {
-                console.error(`Error processing row for student ${data['Enrollment No.']}:`, rowErr);
+                console.error(`Error processing row for student ${data['Enrollment No.'] || 'Unknown'}:`, rowErr);
                 results.errors.push({
-                    enrollment_no: data['Enrollment No.'],
+                    enrollment_no: data['Enrollment No.'] || 'Unknown',
                     error: rowErr.message
                 });
             }

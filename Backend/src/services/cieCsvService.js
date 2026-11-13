@@ -30,6 +30,7 @@ class CieCsvService {
         const batchId = logResult.insertId;
 
         const preview = [];
+        const stagingValues = [];
         for (let i = 0; i < rows.length; i++) {
             const row = rows[i];
             const validation = await this.validateRow(row);
@@ -40,6 +41,23 @@ class CieCsvService {
                 error: validation.error,
                 semester_id: validation.semester_id || null,
             });
+            stagingValues.push([
+                batchId,
+                i + 1,
+                row['Enrollment No.'] || null,
+                JSON.stringify({ ...row, _semester_id: validation.semester_id || null }),
+                validation.status,
+                validation.error
+            ]);
+        }
+
+        if (stagingValues.length > 0) {
+            await db.query(
+                `INSERT INTO import_staging 
+                (batch_id, import_row_number, enrollment_no, raw_data_json, validation_status, error_message) 
+                VALUES ?`,
+                [stagingValues]
+            );
         }
 
         return { batchId, totalRows: rows.length, preview };
@@ -75,24 +93,28 @@ class CieCsvService {
         return { status: 'valid', error: null, semester_id: semRows[0].id };
     }
 
-    async commitImport(batchId, preview) {
-        const validRows = preview.filter(r => r.status === 'valid');
+    async commitImport(batchId) {
+        const [stagedRows] = await db.query(
+            'SELECT * FROM import_staging WHERE batch_id = ? AND validation_status = "valid"',
+            [batchId]
+        );
+
         let successCount = 0;
         let failCount = 0;
         const errors = [];
 
-        for (const item of validRows) {
-            const row = item.data;
+        for (const item of stagedRows) {
+            const row = typeof item.raw_data_json === 'string' ? JSON.parse(item.raw_data_json) : item.raw_data_json;
             try {
                 await db.query(`
                     INSERT INTO cie_marks (semester_id, subject, marks)
                     VALUES (?, ?, ?)
                     ON DUPLICATE KEY UPDATE marks = VALUES(marks)
-                `, [item.semester_id, row['Subject'], parseFloat(row['Marks'])]);
+                `, [row._semester_id, row['Subject'], parseFloat(row['Marks'])]);
                 successCount++;
             } catch (err) {
                 failCount++;
-                errors.push({ row: item.row_number, error: err.message });
+                errors.push({ row: item.import_row_number, error: err.message });
             }
         }
 
